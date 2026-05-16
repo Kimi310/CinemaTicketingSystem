@@ -9,3 +9,32 @@
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
 
+  payment-db:
+    image: postgres:15
+    container_name: cinema-payment-db
+    environment:
+      POSTGRES_USER: paymentadmin
+      POSTGRES_PASSWORD: paymentpassword
+      POSTGRES_DB: payment_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - payment-db-data:/var/lib/postgresql/data
+      - ./schemas/payments_schema.sql:/docker-entrypoint-initdb.d/payments_schema.sql
+
+  ticket-db:
+    image: postgres:15
+    container_name: cinema-ticket-db
+    environment:
+      POSTGRES_USER: ticketadmin
+      POSTGRES_PASSWORD: ticketpassword
+      POSTGRES_DB: ticket_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - ticket-db-data:/var/lib/postgresql/data
+      - ./schemas/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  payment-db-data:
+  ticket-db-data:

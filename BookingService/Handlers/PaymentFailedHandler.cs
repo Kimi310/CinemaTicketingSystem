@@ -1,5 +1,8 @@
-﻿using BookingService.Messaging;
+﻿using BookingService.Data.Entities;
+using BookingService.Data.Repositories;
+using BookingService.Messaging;
 using Contracts.Events;
+using Microsoft.EntityFrameworkCore;
 
 namespace BookingService.Handlers;
 
@@ -9,40 +12,65 @@ namespace BookingService.Handlers;
 /// </summary>
 public class PaymentFailedHandler
 {
+    private readonly IBookingRepository _repository;
     private readonly IEventPublisher _publisher;
     private readonly ILogger<PaymentFailedHandler> _logger;
 
-    public PaymentFailedHandler(IEventPublisher publisher, ILogger<PaymentFailedHandler> logger)
+    public PaymentFailedHandler(
+        IBookingRepository repository,
+        IEventPublisher publisher,
+        ILogger<PaymentFailedHandler> logger)
     {
-        _publisher = publisher;
-        _logger = logger;
+        _repository = repository;
+        _publisher  = publisher;
+        _logger     = logger;
     }
 
-    public Task HandleAsync(PaymentFailed msg)
+    public async Task HandleAsync(PaymentFailed msg)
     {
         _logger.LogWarning("Payment failed for booking {BookingId}: {Reason}",
             msg.BookingId, msg.Reason);
 
-        // -----------------------------------------------------------------
-        // TODO: COMPENSATION - RELEASE SEAT
-        // -----------------------------------------------------------------
-        // Inside a transaction (optimistic locking):
-        //   1. SELECT ticket WHERE id = msg.BookingId.
-        //   2. If status == 'CONFIRMED' -> log inconsistency, abort.
-        //      If status == 'CANCELLED' -> ignore (idempotent).
-        //   3. UPDATE ticket SET status='CANCELLED', version=version+1
-        //      WHERE id=@id AND version=@expectedVersion.
-        //   4. COMMIT. The seat becomes free again because the unique
-        //      partial index (showing_id, seat_id) WHERE status IN
-        //      ('PENDING','CONFIRMED') no longer matches this row.
-        // -----------------------------------------------------------------
+        try
+        {
+            var ticket = await _repository.FindByIdAsync(msg.BookingId);
 
-        _publisher.Publish(new BookingCancelled(
-            BookingId: msg.BookingId,
-            Reason: msg.Reason,
-            CancelledAtUtc: DateTime.UtcNow), BusTopology.BookingCancelled);
+            if (ticket is null)
+            {
+                _logger.LogError("Booking {BookingId} not found — cannot cancel", msg.BookingId);
+                return;
+            }
 
-        return Task.CompletedTask;
+            // Idempotency: already cancelled, nothing to do.
+            if (ticket.Status == TicketStatus.Cancelled)
+            {
+                _logger.LogWarning("Booking {BookingId} already cancelled, skipping", msg.BookingId);
+                return;
+            }
+
+            if (ticket.Status == TicketStatus.Confirmed)
+            {
+                // Payment succeeded and failed events arrived out of order,
+                // or there's a bug upstream. Do not silently cancel a confirmed booking.
+                _logger.LogError("Booking {BookingId} is CONFIRMED — cannot cancel. Manual review required.", msg.BookingId);
+                return;
+            }
+
+            await _repository.UpdateTicketStatusAsync(msg.BookingId, TicketStatus.Cancelled);
+
+            // Seat is now free again — the unique index on (showing_id, seat_id)
+            // only blocks PENDING/CONFIRMED tickets, so a new booking can come in.
+
+            _publisher.Publish(new BookingCancelled(
+                BookingId:      ticket.Id,
+                Reason:         msg.Reason,
+                CancelledAtUtc: DateTime.UtcNow),
+                BusTopology.BookingCancelled);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            _logger.LogWarning("Concurrency conflict cancelling booking {BookingId} — will retry", msg.BookingId);
+            throw;
+        }
     }
 }
-

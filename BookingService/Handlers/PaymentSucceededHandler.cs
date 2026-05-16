@@ -1,5 +1,8 @@
-﻿using BookingService.Messaging;
+﻿using BookingService.Data.Entities;
+using BookingService.Data.Repositories;
+using BookingService.Messaging;
 using Contracts.Events;
+using Microsoft.EntityFrameworkCore;
 
 namespace BookingService.Handlers;
 
@@ -9,46 +12,65 @@ namespace BookingService.Handlers;
 /// </summary>
 public class PaymentSucceededHandler
 {
+    private readonly IBookingRepository _repository;
     private readonly IEventPublisher _publisher;
     private readonly ILogger<PaymentSucceededHandler> _logger;
 
-    public PaymentSucceededHandler(IEventPublisher publisher, ILogger<PaymentSucceededHandler> logger)
+    public PaymentSucceededHandler(
+        IBookingRepository repository,
+        IEventPublisher publisher,
+        ILogger<PaymentSucceededHandler> logger)
     {
-        _publisher = publisher;
-        _logger = logger;
+        _repository = repository;
+        _publisher  = publisher;
+        _logger     = logger;
     }
 
-    public Task HandleAsync(PaymentSucceeded msg)
+    public async Task HandleAsync(PaymentSucceeded msg)
     {
         _logger.LogInformation("Payment {PaymentId} succeeded for booking {BookingId}",
             msg.PaymentId, msg.BookingId);
 
-        // -----------------------------------------------------------------
-        // TODO: CONFIRM BOOKING IN DB
-        // -----------------------------------------------------------------
-        // Inside a transaction:
-        //   1. SELECT ticket WHERE id = msg.BookingId.
-        //      Read its current `version` (optimistic locking column).
-        //   2. If status != 'PENDING' -> ignore (idempotent: already
-        //      processed or cancelled).
-        //   3. UPDATE ticket SET status='CONFIRMED', version=version+1
-        //      WHERE id=@id AND version=@expectedVersion.
-        //      If 0 rows affected -> someone else updated it; retry/abort.
-        //   4. COMMIT.
-        //
-        // Load showing_id / seat_id / user_id from the persisted ticket
-        // rather than carrying them through the saga. For now we publish
-        // placeholders.
-        // -----------------------------------------------------------------
+        try
+        {
+            var ticket = await _repository.FindByIdAsync(msg.BookingId);
 
-        _publisher.Publish(new BookingConfirmed(
-            BookingId: msg.BookingId,
-            ShowingId: 0,   // TODO: read from ticket row
-            SeatId: 0,      // TODO: read from ticket row
-            UserId: 0,      // TODO: read from ticket row
-            ConfirmedAtUtc: DateTime.UtcNow), BusTopology.BookingConfirmed);
+            if (ticket is null)
+            {
+                _logger.LogError("Booking {BookingId} not found — cannot confirm", msg.BookingId);
+                return;
+            }
 
-        return Task.CompletedTask;
+            // Idempotency: already processed, do not re-publish.
+            if (ticket.Status == TicketStatus.Confirmed)
+            {
+                _logger.LogWarning("Booking {BookingId} already confirmed, skipping", msg.BookingId);
+                return;
+            }
+
+            if (ticket.Status == TicketStatus.Cancelled)
+            {
+                _logger.LogError("Booking {BookingId} is CANCELLED — cannot confirm after payment succeeded. Manual review required.", msg.BookingId);
+                return;
+            }
+
+            await _repository.UpdateTicketStatusAsync(msg.BookingId, TicketStatus.Confirmed);
+
+            _publisher.Publish(new BookingConfirmed(
+                BookingId:      ticket.Id,
+                ShowingId:      ticket.ShowingId,
+                SeatId:         ticket.SeatId,
+                UserId:         ticket.UserId,
+                ConfirmedAtUtc: DateTime.UtcNow),
+                BusTopology.BookingConfirmed);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Another process updated the ticket between our read and write.
+            // The subscriber will Nack and the message will be dead-lettered;
+            // a retry mechanism should re-enqueue it.
+            _logger.LogWarning("Concurrency conflict confirming booking {BookingId} — will retry", msg.BookingId);
+            throw;
+        }
     }
 }
-
