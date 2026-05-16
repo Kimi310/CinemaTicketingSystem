@@ -10,16 +10,13 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// ---------------------------------------------------------------------
 // RabbitMQ (the broker is the "third service" of the choreographed saga:
 // every microservice talks ONLY to RabbitMQ, never to each other).
-// ---------------------------------------------------------------------
 builder.Services.AddSingleton<RabbitMqConnection>();
 builder.Services.AddSingleton<IEventPublisher, EventPublisher>();
 
-// Handlers are scoped so they can later take a DbContext per message.
-builder.Services.AddDataServices(builder.Configuration);   // registers IBookingRepository
-builder.Services.AddScoped<PaymentSucceededHandler>();     // resolved later, gets IBookingRepository injected
+builder.Services.AddDataServices(builder.Configuration);   
+builder.Services.AddScoped<PaymentSucceededHandler>();
 builder.Services.AddScoped<PaymentFailedHandler>();
 
 // Background consumer loop.
