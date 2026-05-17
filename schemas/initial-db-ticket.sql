@@ -48,7 +48,6 @@ CREATE TABLE ticket (
                         status           VARCHAR(20)  NOT NULL DEFAULT 'PENDING'
                             CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
                         idempotency_key  VARCHAR(255) NOT NULL,
-                        version          INT          NOT NULL DEFAULT 0,
                         created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
                         PRIMARY KEY (id),
                         CONSTRAINT uq_ticket_showing_seat  UNIQUE      (showing_id, seat_id),

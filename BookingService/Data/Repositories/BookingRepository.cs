@@ -73,7 +73,6 @@ public class BookingRepository : IBookingRepository
             ?? throw new InvalidOperationException($"Ticket {ticketId} not found.");
 
         ticket.Status = newStatus;
-        ticket.Version++;   // EF uses Version as concurrency token
 
         // EF will throw DbUpdateConcurrencyException if the row was
         // modified by another process between the read and this write.

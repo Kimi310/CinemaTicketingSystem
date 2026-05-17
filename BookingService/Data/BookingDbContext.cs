@@ -45,10 +45,6 @@ public class BookingDbContext : DbContext
              .HasMaxLength(255)
              .IsRequired();
  
-            e.Property(t => t.Version)
-             .HasColumnName("version")
-             .IsConcurrencyToken();  // optimistic locking
- 
             e.Property(t => t.CreatedAt)
              .HasColumnName("created_at")
              .IsRequired();

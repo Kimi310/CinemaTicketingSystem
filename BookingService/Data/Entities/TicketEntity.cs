@@ -8,7 +8,6 @@ public class TicketEntity
     public int UserId { get; set; }
     public string Status { get; set; } = TicketStatus.Pending;
     public string IdempotencyKey { get; set; } = default!;
-    public int Version { get; set; } = 0;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
  

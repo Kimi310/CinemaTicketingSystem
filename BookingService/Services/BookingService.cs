@@ -74,7 +74,6 @@ public class BookingService : IBookingService
                 UserId         = request.UserId,
                 Status         = TicketStatus.Pending,
                 IdempotencyKey = request.IdempotencyKey,
-                Version        = 0,
                 CreatedAt      = DateTime.UtcNow,
             };
 
