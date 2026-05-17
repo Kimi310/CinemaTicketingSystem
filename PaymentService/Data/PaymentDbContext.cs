@@ -8,6 +8,7 @@ public class PaymentDbContext : DbContext
     public PaymentDbContext(DbContextOptions<PaymentDbContext> options) : base(options) { }
 
     public DbSet<PaymentEntity> Payments { get; set; } = default!;
+    public DbSet<OutboxPaymentEntity> OutboxPayments { get; set; } = default!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,6 +53,22 @@ public class PaymentDbContext : DbContext
 
             e.HasIndex(p => p.BookingId)
                 .HasDatabaseName("idx_payment_booking_id");
+        });
+
+        modelBuilder.Entity<OutboxPaymentEntity>(e =>
+        {
+            e.ToTable("outbox_payment");
+
+            e.HasKey(o => o.Id);
+
+            e.Property(o => o.Id).HasColumnName("id");
+            e.Property(o => o.BookingId).HasColumnName("booking_id").IsRequired();
+            e.Property(o => o.EventType).HasColumnName("event_type").HasMaxLength(50).IsRequired();
+            e.Property(o => o.Payload).HasColumnName("payload").HasColumnType("text").IsRequired();
+            e.Property(o => o.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+            e.Property(o => o.PublishedAtUtc).HasColumnName("published_at_utc");
+
+            e.HasIndex(o => o.PublishedAtUtc).HasDatabaseName("idx_outbox_payment_unpublished");
         });
     }
 }

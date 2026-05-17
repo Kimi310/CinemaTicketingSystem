@@ -13,3 +13,17 @@ CREATE TABLE payment (
 );
 
 CREATE INDEX idx_payment_booking_id ON payment (booking_id);
+
+-- Outbox pattern (payment side) — atomic write with payment row,
+-- relay polls unpublished rows and pushes to RabbitMQ.
+CREATE TABLE outbox_payment (
+                                id               UUID         NOT NULL DEFAULT gen_random_uuid(),
+                                booking_id       UUID         NOT NULL,
+                                event_type       VARCHAR(50)  NOT NULL,
+                                payload          TEXT         NOT NULL,
+                                created_at_utc   TIMESTAMP    NOT NULL DEFAULT NOW(),
+                                published_at_utc TIMESTAMP    NULL,
+                                PRIMARY KEY (id)
+);
+
+CREATE INDEX idx_outbox_payment_unpublished ON outbox_payment (published_at_utc);

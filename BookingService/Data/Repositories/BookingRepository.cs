@@ -104,4 +104,20 @@ public class BookingRepository : IBookingRepository
 
         _logger.LogInformation("Outbox event {OutboxEventId} marked as published", outboxEventId);
     }
+
+    public Task<IReadOnlyList<OutboxBookingCancelledEntity>> GetUnpublishedCancelledOutboxAsync(
+        int batchSize = 50,
+        CancellationToken ct = default)
+        => _db.OutboxBookingCancelled
+              .Where(o => o.PublishedAtUtc == null)
+              .OrderBy(o => o.CreatedAtUtc)
+              .Take(batchSize)
+              .AsNoTracking()
+              .ToListAsync(ct)
+              .ContinueWith(t => (IReadOnlyList<OutboxBookingCancelledEntity>)t.Result, ct);
+
+    public Task MarkCancelledOutboxPublishedAsync(Guid id, CancellationToken ct = default)
+        => _db.OutboxBookingCancelled
+              .Where(o => o.Id == id)
+              .ExecuteUpdateAsync(s => s.SetProperty(o => o.PublishedAtUtc, DateTime.UtcNow), ct);
 }

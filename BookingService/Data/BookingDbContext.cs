@@ -10,6 +10,7 @@ public class BookingDbContext : DbContext
  
     public DbSet<TicketEntity> Tickets { get; set; } = default!;
     public DbSet<OutboxBookingCreatedEntity> OutboxBookingCreated { get; set; } = default!;
+    public DbSet<OutboxBookingCancelledEntity> OutboxBookingCancelled { get; set; } = default!;
  
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -49,10 +50,14 @@ public class BookingDbContext : DbContext
              .HasColumnName("created_at")
              .IsRequired();
  
-            // Composite unique: one confirmed/pending ticket per seat per showing
+            // Composite unique — but only for ACTIVE tickets (PENDING/CONFIRMED).
+            // A CANCELLED ticket releases the seat, so an unconditional unique
+            // constraint would wrongly block re-booking after compensation.
+            // Postgres partial unique index handles this cleanly.
             e.HasIndex(t => new { t.ShowingId, t.SeatId })
              .IsUnique()
-             .HasDatabaseName("uq_ticket_showing_seat");
+             .HasFilter("status IN ('PENDING', 'CONFIRMED')")
+             .HasDatabaseName("uq_ticket_active_showing_seat");
  
             e.HasIndex(t => t.IdempotencyKey)
              .IsUnique()
@@ -106,6 +111,22 @@ public class BookingDbContext : DbContext
             // all providers, so we use a plain index and filter in the query.
             e.HasIndex(o => o.PublishedAtUtc)
              .HasDatabaseName("idx_outbox_unpublished");
+        });
+
+        // Outbox - cancellations (from expiry worker etc.)
+        modelBuilder.Entity<OutboxBookingCancelledEntity>(e =>
+        {
+            e.ToTable("outbox_booking_cancelled");
+
+            e.HasKey(o => o.Id);
+            e.Property(o => o.Id).HasColumnName("id");
+            e.Property(o => o.BookingId).HasColumnName("booking_id").IsRequired();
+            e.Property(o => o.Reason).HasColumnName("reason").HasMaxLength(500).IsRequired();
+            e.Property(o => o.CancelledAtUtc).HasColumnName("cancelled_at_utc").IsRequired();
+            e.Property(o => o.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+            e.Property(o => o.PublishedAtUtc).HasColumnName("published_at_utc");
+
+            e.HasIndex(o => o.PublishedAtUtc).HasDatabaseName("idx_outbox_cancelled_unpublished");
         });
     }
 }
