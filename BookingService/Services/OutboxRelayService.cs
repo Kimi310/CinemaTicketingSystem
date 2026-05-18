@@ -38,13 +38,18 @@ public class OutboxRelayService : BackgroundService
         await using var scope = _scopeFactory.CreateAsyncScope();
         var repository = scope.ServiceProvider.GetRequiredService<IBookingRepository>();
 
+        await DispatchCreatedAsync(repository, ct);
+        await DispatchCancelledAsync(repository, ct);
+    }
+
+    private async Task DispatchCreatedAsync(IBookingRepository repository, CancellationToken ct)
+    {
         try
         {
             var events = await repository.GetUnpublishedOutboxEventsAsync(batchSize: 50, ct);
-
             if (events.Count == 0) return;
 
-            _logger.LogInformation("Outbox relay: dispatching {Count} event(s)", events.Count);
+            _logger.LogInformation("Outbox relay: dispatching {Count} BookingCreated event(s)", events.Count);
 
             foreach (var outboxEvent in events)
             {
@@ -70,7 +75,40 @@ public class OutboxRelayService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Outbox relay poll failed");
+            _logger.LogError(ex, "Outbox relay (created) poll failed");
+        }
+    }
+
+    private async Task DispatchCancelledAsync(IBookingRepository repository, CancellationToken ct)
+    {
+        try
+        {
+            var events = await repository.GetUnpublishedCancelledOutboxAsync(batchSize: 50, ct);
+            if (events.Count == 0) return;
+
+            _logger.LogInformation("Outbox relay: dispatching {Count} BookingCancelled event(s)", events.Count);
+
+            foreach (var ob in events)
+            {
+                try
+                {
+                    _publisher.Publish(new BookingCancelled(
+                        BookingId:      ob.BookingId,
+                        Reason:         ob.Reason,
+                        CancelledAtUtc: ob.CancelledAtUtc),
+                        BusTopology.BookingCancelled);
+
+                    await repository.MarkCancelledOutboxPublishedAsync(ob.Id, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to publish cancelled outbox event {EventId}", ob.Id);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Outbox relay (cancelled) poll failed");
         }
     }
 }

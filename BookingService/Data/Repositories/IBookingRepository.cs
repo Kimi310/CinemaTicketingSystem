@@ -43,4 +43,10 @@ public interface IBookingRepository
     /// Marks an outbox event as published so the relay does not re-dispatch it.
     /// </summary>
     Task MarkOutboxEventPublishedAsync(Guid outboxEventId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Batch of unpublished BookingCancelled outbox rows (from the expiry worker).
+    /// </summary>
+    Task<IReadOnlyList<OutboxBookingCancelledEntity>> GetUnpublishedCancelledOutboxAsync(int batchSize = 50, CancellationToken ct = default);
+    Task MarkCancelledOutboxPublishedAsync(Guid id, CancellationToken ct = default);
 }

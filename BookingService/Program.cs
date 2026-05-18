@@ -22,6 +22,7 @@ builder.Services.AddScoped<PaymentFailedHandler>();
 // Background consumer loop.
 builder.Services.AddHostedService<RabbitMqSubscriberService>();
 builder.Services.AddHostedService<OutboxRelayService>();
+builder.Services.AddHostedService<PendingTicketExpiryService>();
 
 
 var app = builder.Build();

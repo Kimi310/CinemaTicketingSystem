@@ -1,4 +1,5 @@
-﻿using Contracts.Events;
+﻿using System.Text.Json;
+using Contracts.Events;
 using PaymentService.Data.Entities;
 using PaymentService.Data.Repositories;
 using PaymentService.Messaging;
@@ -29,7 +30,7 @@ public class BookingCreatedHandler
             "Processing payment for booking {BookingId} (amount {Amount})",
             msg.BookingId, msg.Amount);
 
-        // Idempotency check!
+        // Idempotency check.
         // If duplicate idempotency key, republish the previous outcome instead of charging the customer again.
         var existing = await _repository.FindByIdempotencyKeyAsync(msg.IdempotencyKey);
         if (existing is not null)
@@ -51,21 +52,29 @@ public class BookingCreatedHandler
             ProcessedAtUtc = DateTime.UtcNow,
         };
 
+        OutboxPaymentEntity outbox;
+
         if (success)
         {
             payment.Status = PaymentStatus.Succeeded;
             payment.Amount = msg.Amount;
 
-            await _repository.InsertAsync(payment);
-
-            _logger.LogInformation("Payment SUCCEEDED for booking {BookingId}", msg.BookingId);
-
-            _publisher.Publish(new PaymentSucceeded(
+            var evt = new PaymentSucceeded(
                 BookingId:      msg.BookingId,
                 PaymentId:      payment.Id,
                 Amount:         msg.Amount,
-                ProcessedAtUtc: payment.ProcessedAtUtc),
-                BusTopology.PaymentSucceeded);
+                ProcessedAtUtc: payment.ProcessedAtUtc);
+
+            outbox = new OutboxPaymentEntity
+            {
+                Id           = Guid.NewGuid(),
+                BookingId    = msg.BookingId,
+                EventType    = BusTopology.PaymentSucceeded,
+                Payload      = JsonSerializer.Serialize(evt),
+                CreatedAtUtc = DateTime.UtcNow,
+            };
+
+            _logger.LogInformation("Payment SUCCEEDED for booking {BookingId}", msg.BookingId);
         }
         else
         {
@@ -73,16 +82,26 @@ public class BookingCreatedHandler
             payment.Status        = PaymentStatus.Failed;
             payment.FailureReason = reason;
 
-            await _repository.InsertAsync(payment);
-
-            _logger.LogWarning("Payment FAILED for booking {BookingId}: {Reason}", msg.BookingId, reason);
-
-            _publisher.Publish(new PaymentFailed(
+            var evt = new PaymentFailed(
                 BookingId:      msg.BookingId,
                 Reason:         reason,
-                ProcessedAtUtc: payment.ProcessedAtUtc),
-                BusTopology.PaymentFailed);
+                ProcessedAtUtc: payment.ProcessedAtUtc);
+
+            outbox = new OutboxPaymentEntity
+            {
+                Id           = Guid.NewGuid(),
+                BookingId    = msg.BookingId,
+                EventType    = BusTopology.PaymentFailed,
+                Payload      = JsonSerializer.Serialize(evt),
+                CreatedAtUtc = DateTime.UtcNow,
+            };
+
+            _logger.LogWarning("Payment FAILED for booking {BookingId}: {Reason}", msg.BookingId, reason);
         }
+
+        // Atomic write: payment row + outbox row. If the process dies between
+        // here and the broker publish, the OutboxRelayService picks it up.
+        await _repository.InsertWithOutboxAsync(payment, outbox);
     }
 
     // Republish the outcome of a previously processed payment. (BookingService handlers are idempotent so its okay)

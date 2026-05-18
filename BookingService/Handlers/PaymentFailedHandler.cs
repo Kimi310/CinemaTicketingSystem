@@ -58,8 +58,8 @@ public class PaymentFailedHandler
 
             await _repository.UpdateTicketStatusAsync(msg.BookingId, TicketStatus.Cancelled);
 
-            // Seat is now free again — the unique index on (showing_id, seat_id)
-            // only blocks PENDING/CONFIRMED tickets, so a new booking can come in.
+            // Seat is now free again — the partial unique index on (showing_id, seat_id)
+            // only covers PENDING/CONFIRMED tickets, so a new booking can come in.
 
             _publisher.Publish(new BookingCancelled(
                 BookingId:      ticket.Id,
